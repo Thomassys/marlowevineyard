@@ -14,6 +14,9 @@ const db = mysql.createPool({
     database: process.env.DB_NAME
 });
 
+const DIRECTION_ROLE_ID = process.env.DIRECTION_ROLE_ID;
+const RESPONSABLE_ROLE_ID = process.env.RESPONSABLE_ROLE_ID;
+
 client.commands = new Collection();
 
 client.once('ready', async () => {
@@ -35,6 +38,17 @@ client.on('interactionCreate', async interaction => {
             await sendVehiclesEmbeds(interaction, 'Graintrailer');
         } else if (interaction.commandName === 'vehicules_autres') {
             await sendVehiclesEmbeds(interaction, 'autres');
+        } else if (interaction.commandName === 'ajouter_vehicule') {
+            const type = interaction.options.getString('type');
+            const serialNumber = interaction.options.getInteger('serialnumber');
+            const plate = interaction.options.getString('plate');
+            const imageUrl = interaction.options.getString('imageurl') || '';
+            await db.query("INSERT INTO vehicles (type, serialNumber, plate, available, lastUsedBy, lastUsedAt, imageUrl) VALUES (?, ?, ?, 1, NULL, NULL, ?)", [type, serialNumber, plate, imageUrl]);
+            await interaction.reply({ content: `✅ Véhicule **${type} - ${serialNumber}** ajouté avec succès.`, ephemeral: true });
+        } else if (interaction.commandName === 'supprimer_vehicule') {
+            const serialNumber = interaction.options.getInteger('serialnumber');
+            await db.query("DELETE FROM vehicles WHERE serialNumber = ?", [serialNumber]);
+            await interaction.reply({ content: `❌ Véhicule avec numéro de série **${serialNumber}** supprimé.`, ephemeral: true });
         }
     }
 
@@ -45,14 +59,22 @@ client.on('interactionCreate', async interaction => {
         await db.query("UPDATE vehicles SET available = false, lastUsedBy = ?, lastUsedAt = NOW() WHERE id = ?", [interaction.user.id, vehicleId]);
         await db.query("INSERT INTO vehicle_history (vehicle_id, user_id, start_time) VALUES (?, ?, NOW())", [vehicleId, interaction.user.id]);
     } else if (action === 'release') {
+        const [vehicles] = await db.query("SELECT * FROM vehicles WHERE id = ?", [vehicleId]);
+        const vehicle = vehicles[0];
+
+        if (vehicle.lastUsedBy !== interaction.user.id && !interaction.member.roles.cache.has(DIRECTION_ROLE_ID) && !interaction.member.roles.cache.has(RESPONSABLE_ROLE_ID)) {
+            await interaction.reply({ content: `❌ Vous n'avez pas l'autorisation de reposer ce véhicule.`, ephemeral: true });
+            return;
+        }
+
         await db.query("UPDATE vehicles SET available = true WHERE id = ?", [vehicleId]);
-        const [history] = await db.query("SELECT * FROM vehicle_history WHERE vehicle_id = ? AND user_id = ? AND end_time IS NULL ORDER BY start_time DESC LIMIT 1", [vehicleId, interaction.user.id]);
+        const [history] = await db.query("SELECT * FROM vehicle_history WHERE vehicle_id = ? AND end_time IS NULL ORDER BY start_time DESC LIMIT 1", [vehicleId]);
         if (history.length > 0) {
             const startTime = new Date(history[0].start_time);
             const endTime = new Date();
             const duration = Math.floor((endTime - startTime) / 1000);
             await db.query("UPDATE vehicle_history SET end_time = NOW(), duration = ? WHERE id = ?", [duration, history[0].id]);
-            await postUsageToThread(interaction, vehicleId, interaction.user.id, startTime, endTime, duration);
+            await postUsageToThread(interaction, vehicleId, history[0].user_id, startTime, endTime, duration, interaction.user.id);
         }
     }
 
@@ -72,6 +94,7 @@ async function updateVehicleEmbed(interaction) {
         .setTitle(`${vehicle.type} - ${vehicle.serialNumber}`)
         .setColor(0x00AE86)
         .setDescription(`🚗 Plaque: ${vehicle.plate}
+🆔 Numéro de série: ${vehicle.serialNumber}
 📌 Disponible: ${isAvailable ? '✅' : '❌'}
 👤 Dernier usage: <@${vehicle.lastUsedBy}> le ${lastUsedAtFormatted}`);
 
@@ -123,7 +146,8 @@ async function sendVehiclesEmbeds(interaction, filterType = null) {
         const embed = new EmbedBuilder()
             .setTitle(`${vehicle.type} - ${vehicle.serialNumber}`)
             .setColor(0x00AE86)
-            .setDescription(`🚗 Plaque: ${vehicle.plate}
+            .setDescription(`🆔 Numéro de série: ${vehicle.serialNumber}
+🚗 Plaque: ${vehicle.plate}
 📌 Disponible: ${isAvailable ? '✅' : '❌'}
 👤 Dernier usage: <@${vehicle.lastUsedBy}> le ${lastUsedAtFormatted}`);
 
@@ -176,7 +200,7 @@ function formatDuration(seconds) {
     return `${hours > 0 ? `${hours}h ` : ''}${minutes}min`;
 }
 
-async function postUsageToThread(interaction, vehicleId, userId, startTime, endTime, duration) {
+async function postUsageToThread(interaction, vehicleId, userId, startTime, endTime, duration, releaserId = null) {
     const [vehicles] = await db.query("SELECT * FROM vehicles WHERE id = ?", [vehicleId]);
     const vehicle = vehicles[0];
     const threadName = `Historique - ${vehicle.serialNumber}`;
@@ -190,14 +214,20 @@ async function postUsageToThread(interaction, vehicleId, userId, startTime, endT
         await thread.setArchived(false, 'Ajout de l\'historique d\'utilisation');
     }
 
-    const embed = new EmbedBuilder()
-        .setTitle("📝 Historique d'utilisation")
-        .setColor(0x3498db)
-        .setDescription(`👤 • Utilisateur: <@${userId}>
+    let description = `👤 • Utilisateur: <@${userId}>
 📅 • Date: ${moment(endTime).format('DD/MM/YYYY')}
 🕒 • Départ du véhicule : ${moment(startTime).format('HH:mm')}
 🕒 • Repose du véhicule : ${moment(endTime).format('HH:mm')}
-⏱️ • Durée: ${formatDuration(duration)}`);
+⏱️ • Durée: ${formatDuration(duration)}`;
+
+    if (releaserId && releaserId !== userId) {
+        description += `\n🔄 • Reposé par: <@${releaserId}>`;
+    }
+
+    const embed = new EmbedBuilder()
+        .setTitle("📝 Historique d'utilisation")
+        .setColor(0x3498db)
+        .setDescription(description);
 
     await thread.send({ embeds: [embed] });
 }
