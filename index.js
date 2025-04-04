@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, GatewayIntentBits } = require('discord.js');
+const { startWebhook } = require('./webhook');
 require('dotenv').config();
 
 const client = new Client({
@@ -37,6 +38,7 @@ for (const file of eventFiles) {
     const event = require(filePath);
     if (event.once) {
         client.once(event.name, (...args) => event.execute(...args));
+        startWebhook(client);
     } else {
         client.on(event.name, (...args) => event.execute(...args));
     }
