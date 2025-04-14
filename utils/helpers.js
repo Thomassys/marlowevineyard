@@ -186,6 +186,67 @@ async function postUsageToThread(interaction, vehicleId, userId, startTime, endT
     await thread.send({ embeds: [embed] });
 }
 
+async function sendSingleVehicleEmbed(vehicle, client) {
+    const isAvailable = Boolean(vehicle.available);
+    const lastUsedAtFormatted = vehicle.lastUsedAt ? moment(vehicle.lastUsedAt).format('DD/MM/YYYY à HH:mm') : 'Jamais';
+
+    const embed = new EmbedBuilder()
+        .setTitle(`${vehicle.type} - ${vehicle.serialNumber}`)
+        .setColor(0x00AE86)
+        .setDescription(`🆔 Numéro de série: ${vehicle.serialNumber}
+🚗 Plaque: ${vehicle.plate}
+📌 Disponible: ${isAvailable ? '✅' : '❌'}
+👤 Dernier usage: <@${vehicle.lastUsedBy}> le ${lastUsedAtFormatted}`);
+
+    if (vehicle.imageUrl) {
+        embed.setThumbnail(vehicle.imageUrl);
+    }
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`use_${vehicle.id}`)
+            .setLabel("Utiliser le véhicule")
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(!isAvailable),
+        new ButtonBuilder()
+            .setCustomId(`release_${vehicle.id}`)
+            .setLabel("Reposer le véhicule")
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(isAvailable)
+    );
+
+    // 🔀 Choix du salon selon le type
+    let channelId;
+    if (vehicle.type === 'Tractor2') {
+        channelId = process.env.CHANNEL_TRACTEURS_ID;
+    } else if (vehicle.type === 'Graintrailer') {
+        channelId = process.env.CHANNEL_REMORQUES_ID;
+    } else {
+        channelId = process.env.CHANNEL_AUTRES_ID;
+    }
+
+    const channel = await client.channels.fetch(channelId);
+    const message = await channel.send({ embeds: [embed], components: [row] });
+
+    // 📎 Crée un thread d’historique
+    try {
+        const thread = await message.startThread({
+            name: `Historique - ${vehicle.serialNumber}`,
+            autoArchiveDuration: 1440,
+        });
+
+        const historyEmbed = new EmbedBuilder()
+            .setTitle("📝 Historique d'utilisation")
+            .setColor(0x3498db)
+            .setDescription("Aucune utilisation pour le moment.");
+
+        await thread.send({ embeds: [historyEmbed] });
+    } catch (err) {
+        console.error(`❌ Impossible de créer le thread pour ${vehicle.serialNumber}:`, err.message);
+    }
+}
+
+
 function handleSlashCommand(interaction) {
     const command = interaction.client.commands.get(interaction.commandName);
     if (!command) return;
@@ -198,5 +259,6 @@ module.exports = {
     updateVehicleEmbed,
     sendVehiclesEmbeds,
     postUsageToThread,
-    formatDuration
+    formatDuration,
+    sendSingleVehicleEmbed
 };
