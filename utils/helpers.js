@@ -104,6 +104,9 @@ async function sendVehiclesEmbeds(interaction, filterType = null) {
     }
 
     for (const vehicle of filteredVehicles) {
+        // Ne pas recréer les messages si déjà enregistrés
+        if (vehicle.messageId && vehicle.threadId) continue;
+
         const isAvailable = Boolean(vehicle.available);
         const lastUsedAtFormatted = vehicle.lastUsedAt ? moment(vehicle.lastUsedAt).format('DD/MM/YYYY à HH:mm') : 'Jamais';
 
@@ -135,8 +138,9 @@ async function sendVehiclesEmbeds(interaction, filterType = null) {
 
         const message = await interaction.channel.send({ embeds: [embed], components: [row] });
 
+        let thread = null;
         try {
-            const thread = await message.startThread({
+            thread = await message.startThread({
                 name: `Historique - ${vehicle.serialNumber}`,
                 autoArchiveDuration: 1440,
             });
@@ -147,16 +151,24 @@ async function sendVehiclesEmbeds(interaction, filterType = null) {
                 .setDescription("Aucune utilisation pour le moment.");
 
             await thread.send({ embeds: [historyEmbed] });
+
         } catch (error) {
             console.error(`❌ Impossible de créer le thread pour ${vehicle.serialNumber}:`, error.message);
             await interaction.channel.send(`⚠️ Impossible de créer le thread pour **${vehicle.type} - ${vehicle.serialNumber}**.`);
         }
+
+        // ✅ Enregistrer en base les IDs
+        await db.query(
+            "UPDATE vehicles SET messageId = ?, threadId = ? WHERE id = ?",
+            [message.id, thread?.id || null, vehicle.id]
+        );
 
         await new Promise(resolve => setTimeout(resolve, 500));
     }
 
     await interaction.editReply({ content: "Les véhicules ont été affichés." });
 }
+
 
 async function postUsageToThread(interaction, vehicleId, userId, startTime, endTime, duration, releaserId = null) {
     const db = await connectDb();
@@ -187,6 +199,7 @@ async function postUsageToThread(interaction, vehicleId, userId, startTime, endT
 }
 
 async function sendSingleVehicleEmbed(vehicle, client) {
+    const db = await connectDb();
     const isAvailable = Boolean(vehicle.available);
     const lastUsedAtFormatted = vehicle.lastUsedAt ? moment(vehicle.lastUsedAt).format('DD/MM/YYYY à HH:mm') : 'Jamais';
 
@@ -215,7 +228,6 @@ async function sendSingleVehicleEmbed(vehicle, client) {
             .setDisabled(isAvailable)
     );
 
-    // 🔀 Choix du salon selon le type
     let channelId;
     if (vehicle.type === 'Tractor2') {
         channelId = process.env.CHANNEL_TRACTEURS_ID;
@@ -228,9 +240,9 @@ async function sendSingleVehicleEmbed(vehicle, client) {
     const channel = await client.channels.fetch(channelId);
     const message = await channel.send({ embeds: [embed], components: [row] });
 
-    // 📎 Crée un thread d’historique
+    let thread = null;
     try {
-        const thread = await message.startThread({
+        thread = await message.startThread({
             name: `Historique - ${vehicle.serialNumber}`,
             autoArchiveDuration: 1440,
         });
@@ -244,7 +256,14 @@ async function sendSingleVehicleEmbed(vehicle, client) {
     } catch (err) {
         console.error(`❌ Impossible de créer le thread pour ${vehicle.serialNumber}:`, err.message);
     }
+
+    // ✅ Enregistrer dans la base les IDs du message et du thread
+    await db.query(
+        "UPDATE vehicles SET messageId = ?, threadId = ? WHERE id = ?",
+        [message.id, thread?.id || null, vehicle.id]
+    );
 }
+
 
 
 function handleSlashCommand(interaction) {
