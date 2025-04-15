@@ -1,4 +1,5 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { startVehicleReminder, cancelVehicleReminder } = require('../utils/vehicleTimers');
 const moment = require('moment');
 const { connectDb } = require('../database/connect');
 require('dotenv').config();
@@ -21,6 +22,9 @@ async function handleVehicleButtons(interaction) {
         if (action === 'use') {
             await db.query("UPDATE vehicles SET available = false, lastUsedBy = ?, lastUsedAt = NOW() WHERE id = ?", [interaction.user.id, vehicleId]);
             await db.query("INSERT INTO vehicle_history (vehicle_id, user_id, start_time) VALUES (?, ?, NOW())", [vehicleId, interaction.user.id]);
+            // ➕ Démarre le timer de rappel
+            await startVehicleReminder(vehicleId, interaction.user, interaction.client);
+
         } else if (action === 'release') {
             const [vehicles] = await db.query("SELECT * FROM vehicles WHERE id = ?", [vehicleId]);
             const vehicle = vehicles[0];
@@ -29,7 +33,7 @@ async function handleVehicleButtons(interaction) {
                 await interaction.followUp({ content: `❌ Vous n'avez pas l'autorisation de reposer ce véhicule.`, ephemeral: true });
                 return;
             }
-
+            cancelVehicleReminder(vehicleId);
             await db.query("UPDATE vehicles SET available = true WHERE id = ?", [vehicleId]);
             const [history] = await db.query("SELECT * FROM vehicle_history WHERE vehicle_id = ? AND end_time IS NULL ORDER BY start_time DESC LIMIT 1", [vehicleId]);
             if (history.length > 0) {
@@ -42,6 +46,7 @@ async function handleVehicleButtons(interaction) {
         }
 
         await updateVehicleEmbed(interaction);
+        
     } catch (error) {
         console.error('❌ Erreur bouton interaction :', error);
     }
@@ -265,7 +270,6 @@ async function sendSingleVehicleEmbed(vehicle, client) {
 }
 
 
-
 function handleSlashCommand(interaction) {
     const command = interaction.client.commands.get(interaction.commandName);
     if (!command) return;
@@ -279,5 +283,5 @@ module.exports = {
     sendVehiclesEmbeds,
     postUsageToThread,
     formatDuration,
-    sendSingleVehicleEmbed
+    sendSingleVehicleEmbed,
 };
