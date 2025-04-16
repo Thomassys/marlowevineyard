@@ -51,11 +51,11 @@ async function startVehicleReminder(
                 components: [
                     new ActionRowBuilder().addComponents(
                         new ButtonBuilder()
-                            .setCustomId(`extend_15s_${vehicleId}`)
+                            .setCustomId(`extend_15_${vehicleId}`)
                             .setLabel('Prolonger 15s')
                             .setStyle(ButtonStyle.Primary),
                         new ButtonBuilder()
-                            .setCustomId(`extend_30s_${vehicleId}`)
+                            .setCustomId(`extend_30_${vehicleId}`)
                             .setLabel('Prolonger 30s')
                             .setStyle(ButtonStyle.Secondary)
                     )
